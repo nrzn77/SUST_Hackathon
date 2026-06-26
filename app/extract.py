@@ -160,12 +160,14 @@ def _timestamp_hour(ts: str) -> Optional[int]:
 
 # keyword -> txn type hints used for both scoring and case classification
 TYPE_KEYWORDS = {
-    "transfer": ["sent", "send", "transfer", "wrong number", "পাঠ", "ট্রান্সফার"],
-    "payment": ["paid", "pay", "payment", "recharge", "bill", "bkash payment", "বিল", "পেমেন্ট", "রিচার্জ"],
-    "cash_in": ["cash in", "cash-in", "deposit", "agent", "ক্যাশ ইন", "এজেন্ট"],
-    "cash_out": ["cash out", "cash-out", "withdraw", "ক্যাশ আউট"],
+    "transfer": ["sent", "send", "transfer", "wrong number", "পাঠ", "ট্রান্সফার",
+                 "pathai", "pathay", "pathaisi", "disi", "diyechi", "send korsi"],
+    "payment": ["paid", "pay", "payment", "recharge", "bill", "bkash payment", "বিল", "পেমেন্ট",
+                "রিচার্জ", "bill disi", "recharge korsi", "payment korsi"],
+    "cash_in": ["cash in", "cash-in", "deposit", "agent", "ক্যাশ ইন", "এজেন্ট", "cash korsi", "joma"],
+    "cash_out": ["cash out", "cash-out", "withdraw", "ক্যাশ আউট", "tulsi", "tulesi"],
     "settlement": ["settle", "settlement", "merchant", "সেটেলমেন্ট"],
-    "refund": ["refund", "ফেরত"],
+    "refund": ["refund", "ফেরত", "ferot", "back den", "taka back"],
 }
 
 
@@ -204,7 +206,9 @@ def score_transactions(complaint: str, txns: list[dict[str, Any]]) -> list[dict[
             score += 1.0
             reasons.append("time_match")
         # failed/deducted signal
-        if txn.get("status") == "failed" and any(w in lc for w in ["failed", "deduct", "কাটা", "ব্যর্থ"]):
+        if txn.get("status") == "failed" and any(
+            w in lc for w in ["failed", "deduct", "কাটা", "ব্যর্থ", "fail", "kete", "katse"]
+        ):
             score += 1.0
             reasons.append("status_failed")
         scored.append({"txn": txn, "score": score, "reasons": reasons})

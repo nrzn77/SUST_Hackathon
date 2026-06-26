@@ -109,6 +109,33 @@ def test_large_complaint_does_not_crash():
     assert r.status_code == 200
 
 
+def test_banglish_wrong_transfer():
+    """Romanized Bangla (Banglish) must be understood by the rule engine."""
+    r = client.post("/analyze-ticket", json={
+        "ticket_id": "T1",
+        "complaint": "Bhule 500 taka pathay disi. Back den bhai.",
+        "transaction_history": [
+            {"transaction_id": "TXN-1", "timestamp": "2026-04-14T14:00:00Z", "type": "transfer",
+             "amount": 500, "counterparty": "+8801712345678", "status": "completed"},
+        ],
+    })
+    assert r.status_code == 200
+    body = r.json()
+    assert body["case_type"] == "wrong_transfer"
+    assert body["department"] == "dispute_resolution"
+    assert body["relevant_transaction_id"] == "TXN-1"
+
+
+def test_banglish_phishing():
+    r = client.post("/analyze-ticket", json={
+        "ticket_id": "T2",
+        "complaint": "bkash theke call dise OTP chaise, eta ki real?",
+        "transaction_history": [],
+    })
+    assert r.status_code == 200
+    assert r.json()["case_type"] == "phishing_or_social_engineering"
+
+
 def test_output_schema_always_complete():
     required = {
         "ticket_id", "relevant_transaction_id", "evidence_verdict", "case_type",

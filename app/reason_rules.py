@@ -23,35 +23,61 @@ KW = {
         "otp", "pin", "password", "verification code", "scam", "fraud", "suspicious",
         "someone called", "claiming", "click", "link", "won", "lottery", "prize",
         "ওটিপি", "পিন", "পাসওয়ার্ড", "প্রতারণা", "সন্দেহ", "ফোন দিয়ে",
+        # banglish
+        "fake call", "fraud call", "vua call", "vhua", "bhua", "theke call", "call dise",
+        "otp chaise", "pin chaise", "code chaise", "protarona", "frudh",
     ],
     "duplicate": [
         "twice", "two times", "double", "duplicate", "deducted twice", "charged twice",
         "two payments", "double charge", "দুইবার", "ডবল",
+        # banglish
+        "dui bar", "duibar", "dui baar", "dubar", "dui baar", "double kata", "duto",
     ],
     "failed": [
         "failed", "deducted", "deduction", "balance was deducted", "money was deducted",
         "but my balance", "ব্যর্থ", "কাটা হয়েছে", "টাকা কেটে",
+        # banglish
+        "fail", "fail hoise", "fail hoyse", "hoy nai", "hoyni", "hoini",
+        "kete nise", "kete niche", "kete nilo", "kete niya", "katse", "katlo",
+        "balance kete", "taka kete", "kete felse",
     ],
     "wrong": [
         "wrong number", "wrong person", "wrong recipient", "by mistake", "mistakenly",
         "reverse it", "ভুল নম্বর", "ভুল মানুষ", "ভুল করে",
+        # banglish (bhul / vul = mistake)
+        "bhul", "bhule", "vul", "vule", "vhul", "bul kore", "bhul kore", "vul kore",
+        "wrong e", "onno number", "onno manush", "onno jaygay",
     ],
     "transfer_send": [
         "sent", "send", "transfer", "transferred", "পাঠিয়েছি", "পাঠ", "ট্রান্সফার",
+        # banglish (pathানো / দেওয়া)
+        "pathai", "pathay", "pathaisi", "pathaichi", "pathiyechi", "pathailam",
+        "pathaiya", "pathaya", "send korsi", "send korechi", "send disi",
+        "disi", "diyechi", "diychi", "dichi", "dilam", "transfer korsi",
     ],
     "cash_in": [
         "cash in", "cash-in", "cashin", "deposit", "ক্যাশ ইন", "জমা",
+        # banglish
+        "cash korsi", "cash in korsi", "cash korsi", "agent ke", "agent er kache",
     ],
     "settlement": [
         "settle", "settlement", "not been settled", "সেটেলমেন্ট",
+        # banglish
+        "settle hoy nai", "settle hoini", "settlement hoy nai",
     ],
     "refund": [
         "refund", "money back", "changed my mind", "don't want", "do not want",
         "ফেরত", "টাকা ফেরত",
+        # banglish (ferot = return, back den = give back)
+        "ferot", "feret", "fert", "ferat", "back den", "back chai", "back dao",
+        "taka back", "taka ferot", "ferot chai", "ferot dao", "return den",
     ],
     "not_received": [
         "didn't get", "did not get", "not received", "hasn't received", "not reflected",
         "not show", "আসেনি", "পাইনি", "দেখছি না",
+        # banglish
+        "pai nai", "painai", "pai ni", "paini", "pai nei", "ashe nai", "asheni",
+        "ashe ni", "ashena", "dhukeni", "dhuke nai", "joma hoy nai", "pelo na",
     ],
 }
 
@@ -129,8 +155,15 @@ def reason(complaint: str, txns: list[dict], user_type: Optional[str]) -> dict[s
     reason_codes: list[str] = [case_type]
     confidence = 0.85
 
+    # --- phishing / social engineering: always critical, never needs a txn ---
+    if case_type == "phishing_or_social_engineering":
+        verdict = "consistent" if relevant_id else "insufficient_data"
+        severity = "critical"
+        reason_codes = ["phishing", "credential_protection", "critical_escalation"]
+        confidence = 0.95
+
     # --- duplicate payment: lock onto the later of the duplicate pair --------
-    if case_type == "duplicate_payment":
+    elif case_type == "duplicate_payment":
         dup_id = _detect_duplicate_pair(txns)
         if dup_id is not None:
             relevant_id, ambiguous, matched = dup_id, False, next(

@@ -34,7 +34,54 @@ async def root():
     return {"service": "QueueStorm Investigator", "llm_enabled": reason_llm.available()}
 
 
-@app.post("/analyze-ticket")
+_EXAMPLE_TICKET = {
+    "ticket_id": "TKT-001",
+    "complaint": "I sent 5000 taka to a wrong number around 2pm today. Please help.",
+    "language": "en",
+    "channel": "in_app_chat",
+    "user_type": "customer",
+    "campaign_context": "boishakh_bonanza_day_1",
+    "transaction_history": [
+        {
+            "transaction_id": "TXN-9101",
+            "timestamp": "2026-04-14T14:08:22Z",
+            "type": "transfer",
+            "amount": 5000,
+            "counterparty": "+8801719876543",
+            "status": "completed",
+        }
+    ],
+}
+
+# We parse the raw body (for precise 400/422 control), so describe the body to
+# OpenAPI manually — this is what makes Swagger's "Try it out" show an editor.
+_REQUEST_BODY_DOC = {
+    "requestBody": {
+        "required": True,
+        "content": {
+            "application/json": {
+                "schema": {
+                    "type": "object",
+                    "required": ["ticket_id", "complaint"],
+                    "properties": {
+                        "ticket_id": {"type": "string"},
+                        "complaint": {"type": "string"},
+                        "language": {"type": "string"},
+                        "channel": {"type": "string"},
+                        "user_type": {"type": "string"},
+                        "campaign_context": {"type": "string"},
+                        "transaction_history": {"type": "array", "items": {"type": "object"}},
+                        "metadata": {"type": "object"},
+                    },
+                    "example": _EXAMPLE_TICKET,
+                }
+            }
+        },
+    }
+}
+
+
+@app.post("/analyze-ticket", openapi_extra=_REQUEST_BODY_DOC)
 async def analyze_ticket(request: Request):
     # 1. parse JSON body
     try:
