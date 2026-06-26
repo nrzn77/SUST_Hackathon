@@ -101,17 +101,30 @@ def extract_phones(text: str) -> list[str]:
     return phones
 
 
+# multiplier words: k / hajar / hazar / thousand -> x1000 ; lakh / lac -> x100000
+_THOUSAND_RE = re.compile(r"(\d+(?:\.\d+)?)\s*(k|hajar|hazar|hajr|thousand)\b", re.IGNORECASE)
+_LAKH_RE = re.compile(r"(\d+(?:\.\d+)?)\s*(lakh|lac|lakhs|lacs)\b", re.IGNORECASE)
+_MULT_STRIP_RE = re.compile(
+    r"(\d+(?:\.\d+)?)\s*(k|hajar|hazar|hajr|thousand|lakh|lac|lakhs|lacs)\b", re.IGNORECASE)
+
+
 def parse_amounts(text: str) -> list[float]:
-    """Parse plausible money amounts, excluding phone-number digit runs and '5k' forms."""
+    """Parse plausible money amounts.
+
+    Handles bare digits, comma groups, '5k', and Banglish/English multiplier words
+    ('5 hajar' -> 5000, '2 lakh' -> 200000). Phone-number digit runs are excluded.
+    """
     t = to_ascii_digits(text or "")
     # remove phone-like runs so they are not read as amounts
     t = _PHONE_RE.sub(" ", t)
     amounts: list[float] = []
-    # 5k / 5K -> 5000
-    for m in re.finditer(r"(\d+(?:\.\d+)?)\s*[kK]\b", t):
+    for m in _THOUSAND_RE.finditer(t):
         amounts.append(float(m.group(1)) * 1000)
-    t_wo_k = re.sub(r"\d+(?:\.\d+)?\s*[kK]\b", " ", t)
-    for m in re.finditer(r"\d{1,3}(?:,\d{3})+|\d+", t_wo_k):
+    for m in _LAKH_RE.finditer(t):
+        amounts.append(float(m.group(1)) * 100000)
+    # strip multiplier forms so the bare-number pass does not re-read the leading digits
+    t = _MULT_STRIP_RE.sub(" ", t)
+    for m in re.finditer(r"\d{1,3}(?:,\d{3})+|\d+", t):
         raw = m.group(0).replace(",", "")
         if len(raw) >= 7:  # too long to be a campaign-era money amount; likely an id
             continue
@@ -182,6 +195,11 @@ def score_transactions(complaint: str, txns: list[dict[str, Any]]) -> list[dict[
     for txn in txns:
         score = 0.0
         reasons = []
+        # strongest signal: the complaint names the transaction id directly
+        tid = str(txn.get("transaction_id") or "")
+        if tid and tid.lower() in lc:
+            score += 6.0
+            reasons.append("id_mentioned")
         amt = txn.get("amount")
         if amt is not None and amounts:
             if any(abs(amt - a) < 0.01 for a in amounts):

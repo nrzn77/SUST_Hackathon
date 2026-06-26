@@ -265,10 +265,11 @@
       "recommended_next_action": "Escalate to fraud_risk immediately. Confirm to the customer that the company never asks for OTP. Log the reported number for fraud pattern analysis.",
       "customer_reply": "Thank you for reaching out before sharing any information. We never ask for your PIN, OTP, or password under any circumstances. Please do not share these with anyone, even if they claim to be from us. Our fraud team has been notified of this incident.",
       "human_review_required": true,
-      "confidence": 0.6,
+      "confidence": 0.95,
       "reason_codes": [
-        "phishing_or_social_engineering",
-        "needs_clarification"
+        "phishing",
+        "credential_protection",
+        "critical_escalation"
       ]
     },
     "expected_output": {
@@ -457,7 +458,8 @@
       "confidence": 0.65,
       "reason_codes": [
         "ambiguous_match",
-        "needs_clarification"
+        "needs_clarification",
+        "claimed_record_not_found"
       ]
     },
     "expected_output": {

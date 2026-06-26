@@ -136,6 +136,62 @@ def test_banglish_phishing():
     assert r.json()["case_type"] == "phishing_or_social_engineering"
 
 
+def _post(complaint, history=None, **extra):
+    payload = {"ticket_id": "T", "complaint": complaint, "transaction_history": history or []}
+    payload.update(extra)
+    r = client.post("/analyze-ticket", json=payload)
+    assert r.status_code == 200
+    return r.json()
+
+
+_TX5000 = [{"transaction_id": "TXN-9101", "timestamp": "2026-04-14T14:08:22Z", "type": "transfer",
+            "amount": 5000, "counterparty": "+8801719876543", "status": "completed"}]
+_TX500 = [{"transaction_id": "TXN-501", "timestamp": "2026-04-14T13:00:00Z", "type": "payment",
+           "amount": 500, "counterparty": "MERCHANT-7821", "status": "completed"}]
+
+
+def test_pin_reset_is_not_phishing():            # Fix 1
+    assert _post("I forgot my PIN, how do I reset it?")["case_type"] != "phishing_or_social_engineering"
+    assert _post("I want to change my password")["case_type"] != "phishing_or_social_engineering"
+
+
+def test_real_phishing_still_detected():         # Fix 1 control
+    body = _post("Someone called claiming to be from bKash and asked for my OTP")
+    assert body["case_type"] == "phishing_or_social_engineering"
+    assert body["department"] == "fraud_risk"
+
+
+def test_explicit_transaction_id_match():        # Fix 2
+    body = _post("There is a problem with TXN-9101, it went to the wrong number", _TX5000)
+    assert body["relevant_transaction_id"] == "TXN-9101"
+
+
+def test_claimed_amount_absent_is_insufficient():  # Fix 3
+    body = _post("I sent 9999 taka to a wrong number", _TX5000)
+    assert body["relevant_transaction_id"] is None
+    assert body["evidence_verdict"] == "insufficient_data"
+
+
+def test_hajar_amount_parsing():                 # Fix 4
+    body = _post("Bhule 5 hajar taka pathay disi wrong number e", _TX5000)
+    assert body["relevant_transaction_id"] == "TXN-9101"
+
+
+def test_contested_refund_routes_to_dispute():   # Fix 5
+    body = _post("I never authorized this 500 payment, I did not make it, please refund", _TX500)
+    assert body["department"] == "dispute_resolution"
+    assert body["human_review_required"] is True
+    # a normal change-of-mind refund stays with customer_support
+    normal = _post("I paid 500 but changed my mind, please refund", _TX500)
+    assert normal["department"] == "customer_support"
+
+
+def test_self_disclosed_otp_is_not_phishing():   # Fix 6
+    body = _post("my otp is 123456 but the payment is not working")
+    assert body["case_type"] != "phishing_or_social_engineering"
+    assert "123456" not in body["customer_reply"]  # must never echo it back
+
+
 def test_output_schema_always_complete():
     required = {
         "ticket_id", "relevant_transaction_id", "evidence_verdict", "case_type",

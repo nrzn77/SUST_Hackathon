@@ -82,17 +82,39 @@ KW = {
 }
 
 
+# Phishing fires ONLY on a third-party / scam threat signal — NOT on a bare mention
+# of "pin"/"otp". This stops false positives on self-service ("I forgot my PIN") and
+# on customers disclosing their own OTP.
+THREAT_SIGNALS = [
+    "someone called", "some one called", "called me", "got a call", "a call from",
+    "claiming", "claim to be", "claims to be", "are from", "pretending", "impersonat",
+    "scam", "suspicious", "fraud call", "fake call", "fake message", "fake sms",
+    "asked for my", "asking for my", "ask for my", "share korte bol",
+    "you won", "apni jiteche", "lottery", "prize", "click this link", "click the link",
+    "reward link", "theke call", "call dise", "call diye", "call dia",
+    "otp chaise", "pin chaise", "code chaise", "ফোন দিয়ে", "প্রতারণা", "সন্দেহ",
+    "vua call", "bhua call", "protarona",
+]
+
+# Unauthorised / disputed charge -> route a refund to dispute_resolution, not simple support.
+CONTESTED_SIGNALS = [
+    "didn't authorize", "did not authorize", "never authorized", "not authorize",
+    "unauthorized", "unauthorised", "didn't make", "did not make", "never made",
+    "i didn't do", "i did not do", "without my permission", "without permission",
+    "without my knowledge", "ami kori nai", "ami korini", "authorize kori nai",
+    "fraudulent", "i dispute", "disputed", "never bought", "never purchased",
+    "didn't buy", "i never", "charge i never",
+]
+
+
 def _has(text: str, key: str) -> bool:
     return any(kw in text for kw in KW[key])
 
 
 def classify_case_type(complaint_lc: str, user_type: Optional[str], txns: list[dict]) -> str:
     """Pick case_type by primary signal. Order encodes priority (safety first)."""
-    asks_credentials = any(w in complaint_lc for w in ["otp", "pin", "password", "ওটিপি", "পিন"])
-    if _has(complaint_lc, "phishing") and (
-        asks_credentials or "someone called" in complaint_lc or "claiming" in complaint_lc
-        or "scam" in complaint_lc or "suspicious" in complaint_lc or "ফোন দিয়ে" in complaint_lc
-    ):
+    # phishing/social engineering: requires an actual scam/third-party threat
+    if any(w in complaint_lc for w in THREAT_SIGNALS):
         return "phishing_or_social_engineering"
     # duplicate: explicit wording OR a detected duplicate pair
     if _has(complaint_lc, "duplicate") or _detect_duplicate_pair(txns) is not None:
@@ -206,8 +228,29 @@ def reason(complaint: str, txns: list[dict], user_type: Optional[str]) -> dict[s
             confidence = 0.9
             reason_codes = _codes_for(case_type, matched)
 
+    # Fix 3: a specific amount was claimed but nothing in history matches it
+    if relevant_id is None and txns and extract.parse_amounts(complaint):
+        if "claimed_record_not_found" not in reason_codes:
+            reason_codes = reason_codes + ["claimed_record_not_found"]
+
     department = _route(case_type, user_type)
     human_review = _needs_review(case_type, verdict, relevant_id)
+
+    # Fix 5: an unauthorised / disputed refund is a dispute, not simple support
+    if case_type == "refund_request" and any(w in lc for w in CONTESTED_SIGNALS):
+        department = "dispute_resolution"
+        if severity == "low":
+            severity = "medium"
+        human_review = True
+        reason_codes = ["refund_request", "contested_charge", "dispute"]
+
+    # Fix 7: keep safety-first priority (phishing won above) but flag a co-occurring
+    # financial loss so the agent sees both issues.
+    if case_type == "phishing_or_social_engineering" and (
+        _has(lc, "failed") or _has(lc, "wrong") or relevant_id is not None
+    ):
+        if "secondary_financial_issue" not in reason_codes:
+            reason_codes = reason_codes + ["secondary_financial_issue"]
 
     return {
         "relevant_transaction_id": relevant_id,
