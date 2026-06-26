@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: queuestorm-investigator
+    runtime: docker
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: GEMINI_API_KEY
+        sync: false        # set in the Render dashboard; never committed
+      - key: GEMINI_MODEL
+        value: gemini-2.0-flash
+      - key: LLM_TIMEOUT_SECONDS
+        value: "6"
