@@ -43,6 +43,12 @@ def build_text(reasoning: dict[str, Any], language: str) -> dict[str, str]:
     action = _action(case_type, verdict, tid)
     reply = _customer_reply(case_type, verdict, tid, language)
 
+    # Fix 10: matched transaction is already reversed -> tell the agent
+    if status == "reversed" and tid:
+        summary += f" Note: {tid} already shows status 'reversed'."
+        action = (f"Confirm whether the customer has received the reversed funds for {tid} "
+                  f"before taking further action. ") + action
+
     # defence in depth: never emit an unsafe reply
     if not is_safe_reply(reply):
         reply = _safe_fallback(tid, language)

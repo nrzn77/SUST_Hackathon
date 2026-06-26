@@ -71,18 +71,46 @@ def _norm_enum(val: Any, allowed: frozenset[str]) -> Optional[str]:
 
 # --- Language detection -----------------------------------------------------
 
-def detect_language(text: str, declared: Optional[str]) -> str:
-    """Trust a valid declared language; otherwise sniff Bengali vs Latin script."""
-    if declared in ("en", "bn", "mixed"):
-        return declared
+# romanised-Bangla markers: if present, a text in Latin script is likely Banglish,
+# so we must not "correct" a declared bn down to en.
+_BANGLISH_MARKERS = (
+    "pathai", "pathay", "disi", "diyechi", "korsi", "korechi", "taka", "ferot",
+    "bhul", "vul", "kore", "ami", "amar", "hoise", "hoyni", "nai", "den", "bhai",
+    "ekta", "kintu", "kete", "chaise", "hajar", "joma",
+)
+
+
+def _sniff(text: str) -> str:
     bn = len(_BENGALI_RANGE.findall(text or ""))
     lat = len(_LATIN_RANGE.findall(text or ""))
     if bn == 0:
         return "en"
     if lat == 0:
         return "bn"
-    # both scripts present
     return "mixed" if lat > bn * 0.3 else "bn"
+
+
+def detect_language(text: str, declared: Optional[str]) -> str:
+    """Trust the declared language, but override an obvious harness mislabel.
+
+    The script is strong evidence: if a complaint is declared 'en' yet is written
+    largely in Bangla script, the customer reply should be Bangla (and vice-versa).
+    Banglish (romanised Bangla) is protected so a declared 'bn' is not wrongly
+    downgraded to 'en'.
+    """
+    text = text or ""
+    bn = len(_BENGALI_RANGE.findall(text))
+    lat = len(_LATIN_RANGE.findall(text))
+    detected = _sniff(text)
+    if declared not in ("en", "bn", "mixed"):
+        return detected
+    # declared English but the script is dominantly Bangla -> reply in Bangla
+    if declared == "en" and bn > 0 and bn >= lat:
+        return "bn"
+    # declared Bangla but no Bangla script and no Banglish cues -> it is really English
+    if declared == "bn" and bn == 0 and not any(m in text.lower() for m in _BANGLISH_MARKERS):
+        return "en"
+    return declared
 
 
 # --- Amount / phone / time parsing -----------------------------------------
@@ -101,6 +129,38 @@ def extract_phones(text: str) -> list[str]:
     return phones
 
 
+# number words (English + Banglish) for amounts written in words ("five thousand",
+# "pnach hajar", "dui lakh").
+_NUM_WORDS = {
+    "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7,
+    "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12, "fifteen": 15,
+    "twenty": 20, "thirty": 30, "forty": 40, "fifty": 50, "hundred": 100,
+    "ek": 1, "dui": 2, "tin": 3, "char": 4, "panch": 5, "pnach": 5, "pach": 5,
+    "paanch": 5, "choy": 6, "chhoy": 6, "sat": 7, "saat": 7, "aat": 8, "ath": 8,
+    "noy": 9, "noi": 9, "dosh": 10, "dos": 10,
+}
+_SCALE_WORDS = {
+    "hundred": 100, "sho": 100, "shoto": 100, "thousand": 1000, "hajar": 1000,
+    "hazar": 1000, "lakh": 100000, "lac": 100000, "lakhs": 100000, "million": 1000000,
+}
+_WORD_AMOUNT_RE = re.compile(
+    r"\b(" + "|".join(sorted(_NUM_WORDS, key=len, reverse=True)) + r")\s+("
+    + "|".join(sorted(_SCALE_WORDS, key=len, reverse=True)) + r")\b",
+    re.IGNORECASE,
+)
+
+
+def _parse_word_amounts(text: str) -> list[float]:
+    """Parse amounts spelled out in words, e.g. 'five thousand' -> 5000."""
+    out: list[float] = []
+    for m in _WORD_AMOUNT_RE.finditer(text or ""):
+        n = _NUM_WORDS.get(m.group(1).lower())
+        scale = _SCALE_WORDS.get(m.group(2).lower())
+        if n and scale:
+            out.append(float(n * scale))
+    return out
+
+
 # multiplier words: k / hajar / hazar / thousand -> x1000 ; lakh / lac -> x100000
 _THOUSAND_RE = re.compile(r"(\d+(?:\.\d+)?)\s*(k|hajar|hazar|hajr|thousand)\b", re.IGNORECASE)
 _LAKH_RE = re.compile(r"(\d+(?:\.\d+)?)\s*(lakh|lac|lakhs|lacs)\b", re.IGNORECASE)
@@ -117,7 +177,7 @@ def parse_amounts(text: str) -> list[float]:
     t = to_ascii_digits(text or "")
     # remove phone-like runs so they are not read as amounts
     t = _PHONE_RE.sub(" ", t)
-    amounts: list[float] = []
+    amounts: list[float] = _parse_word_amounts(t)
     for m in _THOUSAND_RE.finditer(t):
         amounts.append(float(m.group(1)) * 1000)
     for m in _LAKH_RE.finditer(t):
@@ -169,6 +229,27 @@ def _timestamp_hour(ts: str) -> Optional[int]:
     return int(m.group(1)) if m else None
 
 
+_TODAY_RE = re.compile(r"\b(today|aaj|aj|ajke|ajk)\b|আজ", re.IGNORECASE)
+_YDAY_RE = re.compile(r"\b(yesterday|gotokal|gotkal|gotokaal|kalke|kal)\b|গতকাল|last night", re.IGNORECASE)
+
+
+def resolve_day_reference(text: str, txns: list[dict[str, Any]]) -> Optional[str]:
+    """Map a relative day word to a concrete date (YYYY-MM-DD) from the history.
+
+    'today' -> the most recent date in the history; 'yesterday' -> the date before
+    that. Returns None when no day word is present or no dates are available. This
+    only disambiguates among same-amount transactions; it never overrides amounts.
+    """
+    dates = sorted({t["timestamp"][:10] for t in txns if t.get("timestamp")}, reverse=True)
+    if not dates:
+        return None
+    if _TODAY_RE.search(text or ""):
+        return dates[0]
+    if _YDAY_RE.search(text or ""):
+        return dates[1] if len(dates) > 1 else dates[0]
+    return None
+
+
 # --- Candidate scoring ------------------------------------------------------
 
 # keyword -> txn type hints used for both scoring and case classification
@@ -189,6 +270,7 @@ def score_transactions(complaint: str, txns: list[dict[str, Any]]) -> list[dict[
     amounts = parse_amounts(complaint)
     phones = extract_phones(complaint)
     hours = parse_complaint_hours(complaint)
+    target_date = resolve_day_reference(complaint, txns)
     lc = (complaint or "").lower()
 
     scored = []
@@ -223,6 +305,11 @@ def score_transactions(complaint: str, txns: list[dict[str, Any]]) -> list[dict[
         if th is not None and hours and any(abs(th - h) <= 1 for h in hours):
             score += 1.0
             reasons.append("time_match")
+        # day-word proximity (today/yesterday) — must clearly outweigh the recency
+        # tiebreak so it can actually disambiguate same-amount txns on different days
+        if target_date and txn.get("timestamp", "")[:10] == target_date:
+            score += 1.5
+            reasons.append("day_match")
         # failed/deducted signal
         if txn.get("status") == "failed" and any(
             w in lc for w in ["failed", "deduct", "কাটা", "ব্যর্থ", "fail", "kete", "katse"]

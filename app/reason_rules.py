@@ -244,6 +244,13 @@ def reason(complaint: str, txns: list[dict], user_type: Optional[str]) -> dict[s
         human_review = True
         reason_codes = ["refund_request", "contested_charge", "dispute"]
 
+    # Fix 10: the referenced transaction is already reversed — likely resolved.
+    # Flag it for the agent and ensure a human confirms the customer received funds.
+    if matched and matched.get("status") == "reversed":
+        if "already_reversed" not in reason_codes:
+            reason_codes = reason_codes + ["already_reversed"]
+        human_review = True
+
     # Fix 7: keep safety-first priority (phishing won above) but flag a co-occurring
     # financial loss so the agent sees both issues.
     if case_type == "phishing_or_social_engineering" and (
@@ -281,7 +288,14 @@ def _codes_for(case_type: str, matched: Optional[dict]) -> list[str]:
 
 
 def _route(case_type: str, user_type: Optional[str]) -> str:
-    return CASE_TO_DEPARTMENT.get(case_type, "customer_support")
+    department = CASE_TO_DEPARTMENT.get(case_type, "customer_support")
+    # Fix 9: the actor influences routing for the ambiguous, side-specific cases.
+    # Clear cases (wrong_transfer, payment_failed, duplicate, phishing) keep their map.
+    if user_type == "merchant" and case_type in ("other", "refund_request", "merchant_settlement_delay"):
+        return "merchant_operations"
+    if user_type == "agent" and case_type in ("other", "agent_cash_in_issue"):
+        return "agent_operations"
+    return department
 
 
 def _needs_review(case_type: str, verdict: str, relevant_id: Optional[str]) -> bool:

@@ -192,6 +192,47 @@ def test_self_disclosed_otp_is_not_phishing():   # Fix 6
     assert "123456" not in body["customer_reply"]  # must never echo it back
 
 
+_TWO_DAYS = [
+    {"transaction_id": "TXN-A", "timestamp": "2026-04-14T11:00:00Z", "type": "transfer",
+     "amount": 1000, "counterparty": "+8801711111111", "status": "completed"},
+    {"transaction_id": "TXN-B", "timestamp": "2026-04-13T11:00:00Z", "type": "transfer",
+     "amount": 1000, "counterparty": "+8801722222222", "status": "completed"},
+]
+
+
+def test_day_word_disambiguation():             # Fix 8
+    assert _post("I sent 1000 to a wrong number yesterday", _TWO_DAYS)["relevant_transaction_id"] == "TXN-B"
+    assert _post("I sent 1000 to a wrong number today", _TWO_DAYS)["relevant_transaction_id"] == "TXN-A"
+
+
+def test_user_type_routing():                    # Fix 9
+    assert _post("I have a general issue with my account", user_type="merchant")["department"] == "merchant_operations"
+    assert _post("I have an issue", user_type="agent")["department"] == "agent_operations"
+
+
+def test_already_reversed_is_flagged():          # Fix 10
+    rev = [{"transaction_id": "TXN-R", "timestamp": "2026-04-14T11:00:00Z", "type": "payment",
+            "amount": 1200, "counterparty": "M", "status": "reversed"}]
+    body = _post("I paid 1200 but it failed and money was deducted", rev)
+    assert "already_reversed" in body["reason_codes"]
+    assert body["human_review_required"] is True
+
+
+def test_amounts_in_words():                     # Fix 11
+    from app.extract import parse_amounts
+    assert 5000 in parse_amounts("I sent five thousand taka")
+    assert 5000 in parse_amounts("bhule pnach hajar taka pathaisi")
+    assert 200000 in parse_amounts("dui lakh taka")
+
+
+def test_declared_language_override():           # Fix 12
+    from app.extract import detect_language
+    assert detect_language("আমার টাকা কাটা হয়েছে", "en") == "bn"   # mislabeled en -> bn
+    assert detect_language("my money was deducted", "bn") == "en"   # mislabeled bn -> en
+    assert detect_language("amar taka kete nise bhai", "bn") == "bn"  # banglish stays bn
+    assert detect_language("আমি ২০০০ টাকা ক্যাশ ইন করেছি", "bn") == "bn"  # native bn unaffected
+
+
 def test_output_schema_always_complete():
     required = {
         "ticket_id", "relevant_transaction_id", "evidence_verdict", "case_type",
